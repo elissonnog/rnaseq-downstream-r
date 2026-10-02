@@ -1,0 +1,7 @@
+sample_id,condition,biological_replicate,treatment
+GSM7270183,vehicle,1,DMSO
+GSM7270188,vehicle,2,DMSO
+GSM7270193,vehicle,3,DMSO
+GSM7270186,estradiol,1,1 nM E2
+GSM7270190,estradiol,2,1 nM E2
+GSM7270195,estradiol,3,1 nM E2
