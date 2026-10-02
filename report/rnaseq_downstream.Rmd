@@ -17,7 +17,7 @@ paths <- prepare_output_directories(config$output_dir)
 
 # Purpose
 
-This report performs a declared bulk RNA-seq downstream analysis from integer gene counts and sample metadata. Comparisons come only from the supplied contrast table. Results from the included example are synthetic mechanics checks and must not be interpreted biologically.
+This report performs a declared bulk RNA-seq downstream analysis from integer gene counts and sample metadata. Comparisons come only from the supplied contrast table. The data-status label and project information below identify whether a run uses the synthetic mechanics fixture or a documented public study.
 
 ```{r inputs}
 counts <- read_count_matrix(config$counts_path)
@@ -109,11 +109,19 @@ for (index in seq_len(nrow(contrasts))) {
   print(volcano)
   save_ggplot(volcano, file.path(paths[["figures"]], paste0(stem, "_volcano.png")))
 
-  heatmap_path <- file.path(paths[["figures"]], paste0(stem, "_top_genes_heatmap.png"))
-  save_top_gene_heatmap(
+  ma_plot <- make_ma_plot(result, label, config$fdr, config$data_label)
+  print(ma_plot)
+  save_ggplot(ma_plot, file.path(paths[["figures"]], paste0(stem, "_ma.png")))
+
+  heatmap_path <- file.path(paths[["figures"]], paste0(stem, "_significant_genes_heatmap.png"))
+  heatmap_summary <- save_significant_gene_heatmap(
     transformed, metadata, heatmap_path, config$heatmap_top_genes, result,
-    paste(config$data_label, "top-ranked genes", sep = ": ")
+    config$fdr, config,
+    paste(config$data_label, "significant genes across replicates", sep = ": ")
   )
+  cat("\n\nThe heatmap shows ", length(heatmap_summary$selected_genes), " of ",
+      heatmap_summary$available_significant, " genes passing adjusted p-value < ",
+      config$fdr, ". Values are row-centered variance-stabilized counts; they are not z-scores.\n\n", sep = "")
   cat("\n\n![](figures/", basename(heatmap_path), ")\n\n", sep = "")
 }
 ```
