@@ -1,18 +1,12 @@
-# Reproducible bulk RNA-seq downstream analysis in R
+# Bulk RNA-seq downstream analysis in R
 
-A configuration-driven DESeq2 workflow for turning a gene-by-sample count matrix into an auditable downstream analysis. It connects sample-level quality assessment, normalization, declared differential-expression contrasts, publication-ready figures, and optional human functional enrichment in one reproducible HTML report.
+This repository brings together the main steps I used for downstream bulk RNA-seq analysis during my postdoctoral research at Van Andel Institute. I have adapted that work into a reusable workflow that starts with a gene-count matrix and sample information, then guides the analysis from quality checks through differential expression and visualization.
 
-This workflow model was developed during my postdoctoral research at Van Andel Institute. The reusable version in this repository is adapted from my original analysis code and refactored into a portable report, validation helpers, and a synthetic test fixture. The demonstration data and figures below are entirely synthetic and are not Van Andel Institute experimental results.
+Before comparing conditions, the workflow examines library summaries, PCA, and sample-to-sample correlation so that the overall structure of the experiment can be reviewed. Comparisons are stated explicitly rather than inferred from sample order. For each comparison, the analysis produces a complete DESeq2 results table together with volcano plots and heatmaps that make the direction, strength, and consistency of expression differences easier to interpret. Optional enrichment can then provide a functional summary for human gene sets when that step is appropriate.
 
-## Questions this workflow answers
+The configuration file keeps the design, thresholds, and requested comparisons in one place, while the HTML report records the analysis and figures in a form that can be reviewed and rerun. The workflow begins with integer gene counts; read alignment, transcript quantification, and raw-read QC remain upstream.
 
-- Do samples separate by the biological groups declared in the metadata, and are any samples discordant in PCA or sample correlation?
-- Which genes change for each explicitly declared numerator-versus-denominator comparison?
-- How large and statistically supported are those changes after Benjamini-Hochberg correction?
-- Which top-ranked genes drive the expression pattern across samples?
-- For human data, which GO Biological Process and Reactome terms are over-represented among significant up- and down-regulated genes when enrichment is enabled?
-
-The workflow does not perform read alignment, transcript quantification, or raw-read QC. Those are upstream steps; this repository begins with integer gene counts.
+The included data and figures are a deterministic synthetic example used only to demonstrate and test the workflow. They are not Van Andel Institute experimental results and have no biological interpretation.
 
 ## Synthetic demonstration
 
