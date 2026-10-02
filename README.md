@@ -1,6 +1,6 @@
 # Bulk RNA-seq downstream analysis in R
 
-An R workflow for quality control, DESeq2 differential expression, replicate-level visualization, and a reviewable HTML report from an integer gene-count matrix. The workflow pattern was developed during my postdoctoral work at Van Andel Institute; this repository packages it around an independent public-data example.
+An R workflow for quality control, DESeq2 differential expression, replicate-level visualization, and a reviewable HTML report from an integer gene-count matrix. The workflow pattern was developed during my postdoctoral work at Van Andel Institute and is demonstrated here with a public MCF-7 estradiol-response dataset.
 
 ## Dataset and design
 
@@ -12,7 +12,7 @@ The main example uses [GSE231397](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi
 - Filtering: total count >= 10
 - Significance: Benjamini-Hochberg adjusted p-value < 0.05
 
-The six samples are independent biological replicates; no pairing or unreported batch term is added.
+The design follows the available sample metadata, with six independent biological replicates modeled by condition.
 
 ## Run the public example
 
@@ -55,14 +55,12 @@ The paper reports estrogen-responsive transcription in MCF-7 cells and specifica
 | *PGR* | 5241 | 2.83 | 1.27e-15 |
 | *TFF1* | 7031 | 1.48 | 5.23e-6 |
 
-This is directional concordance for named estrogen-response genes, not a reproduction of the paper's complete analysis. The repository starts from NCBI-standardized counts and applies its own filtering and DESeq2 model; the publication used the dataset within a broader receptor pharmacology study and did not define the same genome-wide contrast summary.
+These results provide directional concordance for named estrogen-response genes. The comparison is intentionally focused on these published targets because this workflow starts from NCBI-standardized counts and applies its own filtering and DESeq2 model, while the publication uses the dataset within a broader receptor-pharmacology study.
 
-## Scope and limitations
+## Methodological note
 
-The workflow starts from integer gene counts. Alignment, transcript quantification, and raw-read QC are upstream. DESeq2 median-ratio normalization assumes that most genes do not undergo a common directional shift. With three replicates per condition, results support this worked example but do not establish clinical or causal conclusions.
+The analysis begins with the NCBI integer gene-count matrix. DESeq2 median-ratio normalization assumes that most genes do not undergo a common directional shift. Results are interpreted for this six-sample experiment, with three biological replicates per condition.
 
 ## Citation
 
 Min CK et al. [Asymmetric allostery in estrogen receptor-alpha homodimers drives responses to the ensemble of estrogens in the hormonal milieu](https://doi.org/10.1073/pnas.2321344121). *PNAS*. 2024. Public data: [GSE231397](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE231397).
-
-No repository license has been selected.
