@@ -6,7 +6,32 @@ Before comparing conditions, the workflow examines library summaries, PCA, and s
 
 The configuration file keeps the design, thresholds, and requested comparisons in one place, while the HTML report records the analysis and figures in a form that can be reviewed and rerun. The workflow begins with integer gene counts; read alignment, transcript quantification, and raw-read QC remain upstream.
 
-The included data and figures are a deterministic synthetic example used only to demonstrate and test the workflow. They are not Van Andel Institute experimental results and have no biological interpretation.
+The repository also retains a deterministic synthetic fixture for testing. The data and figures in that synthetic section are not Van Andel Institute experimental results and have no biological interpretation.
+
+## Public-data example: estradiol response in MCF-7 cells
+
+To show the workflow on a small public study, I reanalyzed six samples from [GSE231397](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE231397): three DMSO vehicle biological replicates and three biological replicates treated with 1 nM 17beta-estradiol (E2) for 24 hours. The comparison is E2 versus vehicle with design `~ condition`; replicate numbers are labels, not inferred pairs, and no batch effect was removed.
+
+This is an independent downstream reanalysis of NCBI-generated counts, not an exact reproduction of the authors' pipeline. NCBI produced the count matrix with HISAT2 and featureCounts against GRCh38.p13, annotation release 109.20190905. The study is reported by Min et al. in *PNAS* (2024), [doi:10.1073/pnas.2321344121](https://doi.org/10.1073/pnas.2321344121); the standardized-count method is described by [NCBI](https://www.ncbi.nlm.nih.gov/geo/info/rnaseqcounts.html).
+
+PCA separated the vehicle and E2 samples along the first component. Among 20,488 genes retained for testing, 2,570 passed adjusted p-value < 0.05: 1,499 had positive and 1,071 had negative unshrunk log2 fold changes for E2 versus vehicle. These are statistical results from this reanalysis and are not clinical claims.
+
+![MA plot for the GSE231397 E2-versus-vehicle reanalysis](figures/gse231397-ma.png)
+
+*MA plot of unshrunk DESeq2 log2 fold changes. Red and blue points pass the declared adjusted-p-value threshold of 0.05.*
+
+![Significant-gene replicate heatmap for GSE231397](figures/gse231397-significant-genes-heatmap.png)
+
+*The 30 highest-ranked genes among the 2,570 significant results, ordered deterministically by adjusted p-value, absolute effect size, and GeneID. Colors are row-centered variance-stabilized counts, not z-scores; the annotation row identifies sample condition.*
+
+The official count archive is not committed to this repository. The downloader verifies its SHA-256 and size, checks the GEO SOFT metadata and sample assignments, and prepares only the six declared columns:
+
+```sh
+./example/gse231397/download_data.sh
+Rscript run_analysis.R config/gse231397_e2_vs_vehicle.R
+```
+
+See [`example/gse231397/PROVENANCE.md`](example/gse231397/PROVENANCE.md) for exact URLs, checksums, sample accessions, attribution, and the distinction between repository materials and upstream GEO data.
 
 ## Synthetic demonstration
 
@@ -26,7 +51,7 @@ The included data and figures are a deterministic synthetic example used only to
 | Filtering and normalization | Removes genes below the configured total-count threshold and estimates DESeq2 size factors and dispersions | Normalized count matrix and run metadata |
 | Sample-level QC | Applies a variance-stabilizing transformation and evaluates PCA, library size, detected genes, and sample correlation | PCA and correlation heatmap |
 | Differential expression | Fits the configured design and evaluates every row of the contrast table | Complete DESeq2 table per comparison |
-| Result visualization | Classifies genes at the configured FDR and plots effect size, significance, and top-ranked expression patterns | Volcano plot and heatmap per comparison |
+| Result visualization | Classifies genes at the configured FDR and plots mean abundance, effect size, significance, and replicate-level expression patterns | MA plot, volcano plot, and significant-gene heatmap per comparison |
 | Optional enrichment | Separately tests significant up- and down-regulated human genes against the tested-gene universe | GO-BP, Reactome, and ID-mapping tables |
 
 ## Requirements
@@ -108,9 +133,10 @@ The configured output directory receives:
 - `figures/pca.png`
 - `figures/sample_correlation.png`
 - `figures/<contrast>_volcano.png`
-- `figures/<contrast>_top_genes_heatmap.png`
+- `figures/<contrast>_ma.png`
+- `figures/<contrast>_significant_genes_heatmap.png`
 - enrichment tables and identifier-mapping summaries when enrichment is enabled
 
-Each report records the configured design, thresholds, declared comparisons, data-status label, and R session information. A real worked example should be added only when its data provenance and release permissions are confirmed.
+Each report records the configured design, thresholds, declared comparisons, data-status label, and R session information. The public GSE231397 example is included with its provenance, checksums, and sample selection documented separately from the workflow code.
 
 No license has been selected.
