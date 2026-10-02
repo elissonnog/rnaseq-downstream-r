@@ -1,0 +1,153 @@
+---
+title: "RNA-seq downstream analysis"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+params:
+  config_path: "config/example_config.R"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+source(file.path("R", "helpers.R"))
+config <- load_analysis_config(params$config_path)
+paths <- prepare_output_directories(config$output_dir)
+```
+
+# Purpose
+
+This report performs a declared bulk RNA-seq downstream analysis from integer gene counts and sample metadata. Comparisons come only from the supplied contrast table. Results from the included example are synthetic mechanics checks and must not be interpreted biologically.
+
+```{r inputs}
+counts <- read_count_matrix(config$counts_path)
+metadata <- read_sample_metadata(config$metadata_path)
+contrasts <- read_contrasts(config$contrasts_path)
+metadata <- validate_analysis_inputs(counts, metadata, contrasts, config$design)
+
+data.frame(
+  project = config$project_title,
+  data_status = config$data_label,
+  genes = nrow(counts),
+  samples = ncol(counts),
+  design = config$design,
+  contrasts = nrow(contrasts),
+  stringsAsFactors = FALSE
+)
+knitr::kable(metadata, caption = "Sample metadata")
+knitr::kable(contrasts, caption = "Declared comparisons")
+```
+
+# Filtering and model fit
+
+Genes with total count below `r config$min_total_count` are excluded before fitting. DESeq2 estimates library-size factors and dispersions and fits the configured design.
+
+```{r model}
+dds <- prepare_deseq_dataset(counts, metadata, config$design, config$min_total_count)
+dds <- fit_deseq_model(dds)
+transformed <- transform_for_visualization(dds)
+
+normalized_counts <- as.data.frame(DESeq2::counts(dds, normalized = TRUE))
+normalized_counts$gene_id <- rownames(normalized_counts)
+normalized_counts <- normalized_counts[, c("gene_id", setdiff(names(normalized_counts), "gene_id"))]
+write.csv(normalized_counts, file.path(paths[["tables"]], "normalized_counts.csv"), row.names = FALSE)
+write.csv(
+  data.frame(
+    project = config$project_title,
+    data_status = config$data_label,
+    design = config$design,
+    fdr = config$fdr,
+    min_total_count = config$min_total_count,
+    stringsAsFactors = FALSE
+  ),
+  file.path(paths[["tables"]], "run_metadata.csv"),
+  row.names = FALSE
+)
+
+qc_summary <- data.frame(
+  sample_id = colnames(counts),
+  library_size = colSums(counts),
+  detected_genes = colSums(counts > 0),
+  size_factor = DESeq2::sizeFactors(dds),
+  row.names = NULL
+)
+knitr::kable(qc_summary, digits = 3, caption = "Library and normalization summary")
+```
+
+# Sample-level quality assessment
+
+PCA uses the configured number of highest-variance variance-stabilized genes. The correlation heatmap uses all retained transformed genes.
+
+```{r sample-qc, fig.width=7, fig.height=5}
+pca_plot <- make_pca_plot(transformed, metadata, config$pca_top_genes, paste(config$data_label, "PCA", sep = ": "))
+print(pca_plot)
+save_ggplot(pca_plot, file.path(paths[["figures"]], "pca.png"))
+correlation_path <- file.path(paths[["figures"]], "sample_correlation.png")
+save_correlation_heatmap(transformed, correlation_path, paste(config$data_label, "sample correlation", sep = ": "))
+knitr::include_graphics(normalizePath(correlation_path))
+```
+
+# Differential expression
+
+Adjusted p-values use the Benjamini-Hochberg procedure. Direction indicates the sign of the numerator-versus-denominator log2 fold change among genes passing the configured FDR.
+
+```{r differential-expression, results='asis', fig.width=7, fig.height=5}
+contrast_results <- list()
+for (index in seq_len(nrow(contrasts))) {
+  comparison <- contrasts[index, , drop = FALSE]
+  label <- comparison$label[[1L]]
+  stem <- safe_file_stem(label)
+  result <- run_deseq_contrast(dds, comparison, config$fdr)
+  contrast_results[[label]] <- result
+  write.csv(result, file.path(paths[["tables"]], paste0(stem, "_deseq2.csv")), row.names = FALSE)
+
+  cat("\n\n## ", label, "\n\n", sep = "")
+  summary_table <- as.data.frame(table(result$direction), stringsAsFactors = FALSE)
+  names(summary_table) <- c("classification", "genes")
+  print(knitr::kable(summary_table, caption = paste("FDR", config$fdr)))
+  volcano <- make_volcano_plot(result, label, config$fdr, config$data_label)
+  print(volcano)
+  save_ggplot(volcano, file.path(paths[["figures"]], paste0(stem, "_volcano.png")))
+
+  heatmap_path <- file.path(paths[["figures"]], paste0(stem, "_top_genes_heatmap.png"))
+  save_top_gene_heatmap(
+    transformed, metadata, heatmap_path, config$heatmap_top_genes, result,
+    paste(config$data_label, "top-ranked genes", sep = ": ")
+  )
+  cat("\n\n![](figures/", basename(heatmap_path), ")\n\n", sep = "")
+}
+```
+
+# Optional functional enrichment
+
+Enrichment is disabled for the synthetic fixture. When enabled, the workflow maps the configured identifier type to Entrez IDs and analyzes significant up- and down-regulated genes separately against the set of tested genes. Failure to map identifiers produces empty outputs rather than a biological claim.
+
+```{r enrichment}
+if (isTRUE(config$enrichment$enabled)) {
+  for (label in names(contrast_results)) {
+    result <- contrast_results[[label]]
+    stem <- safe_file_stem(label)
+    for (direction in c("up", "down")) {
+      selected <- result$gene_id[result$direction == direction]
+      enrichment <- run_optional_enrichment(
+        gene_ids = selected,
+        universe_ids = result$gene_id[!is.na(result$pvalue)],
+        direction = direction,
+        contrast_label = label,
+        config = config
+      )
+      write.csv(enrichment$go_bp, file.path(paths[["tables"]], paste0(stem, "_", direction, "_go_bp.csv")), row.names = FALSE)
+      write.csv(enrichment$reactome, file.path(paths[["tables"]], paste0(stem, "_", direction, "_reactome.csv")), row.names = FALSE)
+      write.csv(enrichment$mapping_coverage, file.path(paths[["tables"]], paste0(stem, "_", direction, "_mapping_coverage.csv")), row.names = FALSE)
+    }
+  }
+} else {
+  cat("Enrichment was not requested in this configuration.")
+}
+```
+
+# Reproducibility
+
+```{r session-info}
+sessionInfo()
+```
