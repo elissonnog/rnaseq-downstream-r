@@ -293,6 +293,121 @@ make_volcano_plot <- function(result_table, label, fdr, data_label = NULL) {
     ggplot2::theme_minimal(base_size = 11)
 }
 
+make_ma_plot <- function(result_table, label, fdr, data_label = NULL) {
+  if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Package `ggplot2` is required.")
+  plot_data <- result_table[
+    is.finite(result_table$baseMean) & result_table$baseMean > 0 &
+      is.finite(result_table$log2FoldChange),
+    , drop = FALSE
+  ]
+  ggplot2::ggplot(plot_data, ggplot2::aes(x = baseMean, y = log2FoldChange, color = direction)) +
+    ggplot2::geom_point(alpha = 0.65, size = 1.35, na.rm = TRUE) +
+    ggplot2::scale_x_log10() +
+    ggplot2::scale_color_manual(values = c(up = "#B2182B", down = "#2166AC", not_significant = "#BDBDBD")) +
+    ggplot2::geom_hline(yintercept = 0, linewidth = 0.4) +
+    ggplot2::labs(
+      title = if (is.null(data_label)) label else paste(data_label, label, sep = ": "),
+      subtitle = sprintf("Significance: adjusted p-value < %.3g; fold changes are unshrunk", fdr),
+      x = "Mean normalized count", y = "log2 fold change", color = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 11)
+}
+
+select_significant_genes <- function(result_table, fdr, max_genes) {
+  qualifying <- !is.na(result_table$padj) & result_table$padj < fdr &
+    is.finite(result_table$log2FoldChange)
+  candidates <- result_table[qualifying, , drop = FALSE]
+  if (!nrow(candidates)) return(character())
+  ordering <- order(
+    candidates$padj,
+    -abs(candidates$log2FoldChange),
+    as.character(candidates$gene_id),
+    na.last = TRUE
+  )
+  candidates$gene_id[ordering][seq_len(min(nrow(candidates), max_genes))]
+}
+
+map_gene_display_labels <- function(gene_ids, config) {
+  labels <- as.character(gene_ids)
+  enrichment <- config$enrichment
+  if (is.null(enrichment$gene_id_type) || identical(enrichment$gene_id_type, "SYMBOL")) return(labels)
+  if (!requireNamespace("AnnotationDbi", quietly = TRUE) ||
+      !requireNamespace(enrichment$organism_db, quietly = TRUE)) return(labels)
+  orgdb <- getExportedValue(enrichment$organism_db, enrichment$organism_db)
+  symbols <- suppressMessages(AnnotationDbi::mapIds(
+    orgdb,
+    keys = labels,
+    column = "SYMBOL",
+    keytype = enrichment$gene_id_type,
+    multiVals = "first"
+  ))
+  symbols <- unname(symbols[labels])
+  has_symbol <- !is.na(symbols) & nzchar(symbols)
+  labels[has_symbol] <- paste0(symbols[has_symbol], " (", labels[has_symbol], ")")
+  labels
+}
+
+save_significant_gene_heatmap <- function(
+    transformed, metadata, path, top_genes, result_table, fdr, config,
+    plot_title = "Significant genes across replicates") {
+  if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Package `ggplot2` is required.")
+  matrix <- SummarizedExperiment::assay(transformed)
+  selected <- select_significant_genes(result_table, fdr, top_genes)
+  selected <- intersect(selected, rownames(matrix))
+  if (!length(selected)) {
+    empty_plot <- ggplot2::ggplot() +
+      ggplot2::annotate("text", x = 0, y = 0, label = sprintf("No genes passed adjusted p-value < %.3g", fdr), size = 5) +
+      ggplot2::labs(title = plot_title) +
+      ggplot2::theme_void(base_size = 11)
+    save_ggplot(empty_plot, path, width = 8, height = 4)
+    return(invisible(list(selected_genes = character(), available_significant = 0L)))
+  }
+
+  significant_available <- sum(!is.na(result_table$padj) & result_table$padj < fdr)
+  display <- matrix[selected, , drop = FALSE]
+  display <- sweep(display, 1L, rowMeans(display), FUN = "-")
+  labels <- map_gene_display_labels(selected, config)
+  rownames(display) <- labels
+  sample_order <- rownames(metadata)
+  display <- display[, sample_order, drop = FALSE]
+
+  heatmap_data <- as.data.frame(as.table(display), stringsAsFactors = FALSE)
+  names(heatmap_data) <- c("gene", "sample_id", "row_centered_vst")
+  heatmap_data$sample_id <- factor(heatmap_data$sample_id, levels = sample_order)
+  heatmap_levels <- c(rev(labels), "Condition")
+  heatmap_data$gene <- factor(heatmap_data$gene, levels = heatmap_levels)
+  condition <- if ("condition" %in% names(metadata)) as.character(metadata[sample_order, "condition"]) else rep("sample", length(sample_order))
+  annotation <- data.frame(
+    sample_id = factor(sample_order, levels = sample_order),
+    gene = factor(rep("Condition", length(sample_order)), levels = heatmap_levels),
+    condition = condition,
+    stringsAsFactors = FALSE
+  )
+
+  plot <- ggplot2::ggplot(heatmap_data, ggplot2::aes(x = sample_id, y = gene, fill = row_centered_vst)) +
+    ggplot2::geom_tile() +
+    ggplot2::geom_point(
+      data = annotation,
+      ggplot2::aes(x = sample_id, y = gene, color = condition),
+      inherit.aes = FALSE,
+      shape = 15, size = 5
+    ) +
+    ggplot2::scale_fill_gradient2(low = "#2166AC", mid = "#F7F7F7", high = "#B2182B", midpoint = 0) +
+    ggplot2::labs(
+      title = plot_title,
+      subtitle = sprintf("%d of %d genes passing adjusted p-value < %.3g; deterministic ranking by adjusted p-value and effect size", length(selected), significant_available, fdr),
+      x = NULL, y = NULL, fill = "Row-centered\nVST", color = "Condition"
+    ) +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      panel.grid = ggplot2::element_blank(),
+      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1),
+      plot.margin = ggplot2::margin(18, 12, 12, 12)
+    )
+  save_ggplot(plot, path, width = 9, height = max(6, 0.28 * length(selected) + 2.5))
+  invisible(list(selected_genes = selected, available_significant = significant_available))
+}
+
 save_ggplot <- function(plot, path, width = 7, height = 5) {
   ggplot2::ggsave(path, plot = plot, width = width, height = height, units = "in", dpi = 150)
   invisible(path)
