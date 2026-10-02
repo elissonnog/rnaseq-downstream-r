@@ -1,6 +1,6 @@
 output/
+example/gse231397/data/
 *.html
 *.Rproj.user/
 .Rhistory
 .RData
-
