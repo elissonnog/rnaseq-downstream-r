@@ -116,4 +116,19 @@ assert_true(identical(config$design, "~ condition"), "Configuration did not load
 assert_true(grepl("SYNTHETIC", config$data_label, fixed = TRUE), "Synthetic status label is missing.")
 assert_true(!isTRUE(config$enrichment$enabled), "Synthetic enrichment must remain disabled.")
 
+ranking_fixture <- data.frame(
+  gene_id = c("gene_a", "gene_b", "gene_c", "gene_d"),
+  padj = c(0.01, 0.02, 0.01, 0.20),
+  log2FoldChange = c(1, 5, -2, 8),
+  stringsAsFactors = FALSE
+)
+assert_true(
+  identical(select_significant_genes(ranking_fixture, 0.05, 2L), c("gene_c", "gene_a")),
+  "Significant-gene heatmap ranking is not deterministic."
+)
+assert_true(
+  identical(select_significant_genes(ranking_fixture, 0.001, 10L), character()),
+  "Heatmap selection must not include genes outside the declared adjusted-p-value threshold."
+)
+
 cat("All dependency-free helper and fixture tests passed.\n")
