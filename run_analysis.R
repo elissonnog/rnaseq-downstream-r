@@ -7,15 +7,18 @@ project_root <- if (length(script_path)) dirname(normalizePath(script_path)) els
 setwd(project_root)
 source(file.path("R", "helpers.R"))
 
-if (identical(args, "--check-dependencies")) {
-  print(check_dependencies(include_enrichment = TRUE), row.names = FALSE)
-  quit(status = 0L)
+if (length(args) && identical(args[[1L]], "--check-dependencies")) {
+  config_path <- if (length(args) >= 2L) args[[2L]] else file.path("config", "example_config.R")
+  config <- load_analysis_config(config_path)
+  dependencies <- check_dependencies(config, include_enrichment = isTRUE(config$enrichment$enabled))
+  print(dependencies, row.names = FALSE)
+  quit(status = if (any(!dependencies$available)) 1L else 0L)
 }
 
 config_path <- if (length(args)) args[[1L]] else file.path("config", "example_config.R")
 config <- load_analysis_config(config_path)
 config_path_abs <- normalizePath(config_path)
-dependencies <- check_dependencies(include_enrichment = isTRUE(config$enrichment$enabled))
+dependencies <- check_dependencies(config, include_enrichment = isTRUE(config$enrichment$enabled))
 missing <- dependencies$dependency[!dependencies$available]
 if (length(missing)) {
   stop("Missing required packages: ", paste(missing, collapse = ", "), ". No packages were installed.")

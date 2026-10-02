@@ -4,157 +4,199 @@ output:
   html_document:
     toc: true
     toc_float: true
+    df_print: paged
 params:
   config_path: "config/example_config.R"
+  portfolio_snapshot: false
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 7, fig.height = 5)
 source(file.path("R", "helpers.R"))
+resolve_project_path <- function(path) if (grepl("^/", path)) path else file.path(getwd(), path)
 config <- load_analysis_config(params$config_path)
-paths <- prepare_output_directories(config$output_dir)
-```
+paths <- prepare_output_directories(resolve_project_path(config$output_dir))
+warning_log <- character()
+capture_warnings <- function(expr) withCallingHandlers(expr, warning = function(w) {
+  warning_log <<- c(warning_log, conditionMessage(w)); invokeRestart("muffleWarning")
+})
 
-# Purpose
+counts_path <- resolve_project_path(config$counts_path)
+metadata_path <- resolve_project_path(config$metadata_path)
+contrasts_path <- resolve_project_path(config$contrasts_path)
+counts <- read_count_matrix(counts_path)
+sample_metadata <- read_sample_metadata(metadata_path)
+contrasts <- read_contrasts(contrasts_path)
+sample_metadata <- validate_analysis_inputs(counts, sample_metadata, contrasts, config$design)
 
-This report performs a declared bulk RNA-seq downstream analysis from integer gene counts and sample metadata. Comparisons come only from the supplied contrast table. The data-status label and project information below identify whether a run uses the synthetic mechanics fixture or a documented public study.
+dds <- prepare_deseq_dataset(counts, sample_metadata, config$design, config$min_total_count)
+dds <- capture_warnings(fit_deseq_model(dds))
+transformed <- capture_warnings(transform_for_visualization(dds))
 
-```{r inputs}
-counts <- read_count_matrix(config$counts_path)
-metadata <- read_sample_metadata(config$metadata_path)
-contrasts <- read_contrasts(config$contrasts_path)
-metadata <- validate_analysis_inputs(counts, metadata, contrasts, config$design)
-
-data.frame(
-  project = config$project_title,
-  data_status = config$data_label,
-  genes = nrow(counts),
-  samples = ncol(counts),
-  design = config$design,
-  contrasts = nrow(contrasts),
-  stringsAsFactors = FALSE
-)
-knitr::kable(metadata, caption = "Sample metadata")
-knitr::kable(contrasts, caption = "Declared comparisons")
-```
-
-# Filtering and model fit
-
-Genes with total count below `r config$min_total_count` are excluded before fitting. DESeq2 estimates library-size factors and dispersions and fits the configured design.
-
-```{r model}
-dds <- prepare_deseq_dataset(counts, metadata, config$design, config$min_total_count)
-dds <- fit_deseq_model(dds)
-transformed <- transform_for_visualization(dds)
-
-normalized_counts <- as.data.frame(DESeq2::counts(dds, normalized = TRUE))
+normalized_counts <- as.data.frame(DESeq2::counts(dds, normalized = TRUE), check.names = FALSE)
 normalized_counts$gene_id <- rownames(normalized_counts)
 normalized_counts <- normalized_counts[, c("gene_id", setdiff(names(normalized_counts), "gene_id"))]
 write.csv(normalized_counts, file.path(paths[["tables"]], "normalized_counts.csv"), row.names = FALSE)
-write.csv(
-  data.frame(
-    project = config$project_title,
-    data_status = config$data_label,
-    design = config$design,
-    fdr = config$fdr,
-    min_total_count = config$min_total_count,
-    stringsAsFactors = FALSE
-  ),
-  file.path(paths[["tables"]], "run_metadata.csv"),
-  row.names = FALSE
-)
 
 qc_summary <- data.frame(
-  sample_id = colnames(counts),
-  library_size = colSums(counts),
-  detected_genes = colSums(counts > 0),
-  size_factor = DESeq2::sizeFactors(dds),
+  sample_id = colnames(counts), library_size = colSums(counts),
+  detected_genes = colSums(counts > 0), size_factor = DESeq2::sizeFactors(dds),
   row.names = NULL
 )
+write.csv(qc_summary, file.path(paths[["tables"]], "sample_qc.csv"), row.names = FALSE)
+
+contrast_results <- list()
+summary_rows <- vector("list", nrow(contrasts))
+for (index in seq_len(nrow(contrasts))) {
+  comparison <- contrasts[index, , drop = FALSE]
+  label <- comparison$label[[1L]]
+  result <- capture_warnings(run_deseq_contrast(
+    dds, comparison, config$fdr, input_counts = counts,
+    min_total_count = config$min_total_count
+  ))
+  contrast_results[[label]] <- result
+  summary_rows[[index]] <- summarize_contrast_result(result, label)
+  write.csv(result, file.path(paths[["tables"]], paste0(safe_file_stem(label), "_deseq2.csv")),
+            row.names = FALSE)
+}
+result_summary <- do.call(rbind, summary_rows)
+write.csv(result_summary, file.path(paths[["tables"]], "contrast_summary.csv"), row.names = FALSE)
+
+input_files <- c(counts = counts_path, metadata = metadata_path, contrasts = contrasts_path,
+                 config = params$config_path)
+write.csv(input_manifest(input_files), file.path(paths[["tables"]], "input_manifest.csv"), row.names = FALSE)
+write.csv(software_versions(unique(c(required_core_packages(),
+  if (isTRUE(config$gene_labels$enabled)) c("AnnotationDbi", config$gene_labels$organism_db) else character()))),
+  file.path(paths[["tables"]], "software_versions.csv"), row.names = FALSE)
+write.csv(code_manifest(c("R/helpers.R", "report/rnaseq_downstream.Rmd", "run_analysis.R")),
+          file.path(paths[["tables"]], "code_manifest.csv"), row.names = FALSE)
+writeLines(capture.output(dput(config)), file.path(paths[["tables"]], "resolved_config.txt"))
+run_metadata <- data.frame(
+  field = c("project", "data_status", "design", "fdr", "minimum_total_count",
+            "input_genes", "retained_genes", "samples", "contrasts", "generated_utc"),
+  value = c(config$project_title, config$data_label, config$design, config$fdr,
+            config$min_total_count, nrow(counts), nrow(dds), ncol(counts), nrow(contrasts),
+            format(Sys.time(), tz = "UTC", usetz = TRUE)), stringsAsFactors = FALSE
+)
+write.csv(run_metadata, file.path(paths[["tables"]], "run_metadata.csv"), row.names = FALSE)
+```
+
+# Analysis summary
+
+**`r config$project_title`**  
+**Data status:** `r config$data_label`
+
+This report starts from a declared integer gene-count matrix; it does not perform read alignment or gene quantification. All comparisons come from the supplied contrast table.
+
+```{r headline-summary}
+knitr::kable(result_summary, digits = 4, caption = "Contrast-level result ledger summary")
+```
+
+`input_rows` is the full input feature universe. A missing adjusted p-value is never called non-significant: `all_zero`, `low_count_filtered`, `unavailable`, and `independent_filtered` remain separate from `tested_nonsignificant`. Benjamini-Hochberg adjustment and DESeq2 independent filtering are applied separately within each declared contrast.
+
+# Inputs and design
+
+```{r inputs}
+knitr::kable(run_metadata, caption = "Resolved run metadata")
+knitr::kable(sample_metadata, caption = "Sample metadata")
+knitr::kable(contrasts, caption = "Declared comparisons")
 knitr::kable(qc_summary, digits = 3, caption = "Library and normalization summary")
 ```
 
-# Sample-level quality assessment
+Genes with total count below `r config$min_total_count` are excluded from model fitting but retained in each result ledger. The design is `r config$design`; categorical metadata with numeric-only codes are rejected to avoid accidental continuous-variable semantics.
 
-PCA uses the configured number of highest-variance variance-stabilized genes. The correlation heatmap uses all retained transformed genes.
+# Sample-level diagnostics
 
-```{r sample-qc, fig.width=7, fig.height=5}
-pca_plot <- make_pca_plot(transformed, metadata, config$pca_top_genes, paste(config$data_label, "PCA", sep = ": "))
+PCA uses the `r config$pca_top_genes` highest-variance variance-stabilized genes. The correlation matrix uses every retained transformed gene and prints Pearson coefficients in the figure and downloadable table.
+
+```{r diagnostics}
+pca_plot <- make_pca_plot(transformed, sample_metadata, config$pca_top_genes,
+                          paste(config$data_label, "PCA", sep = ": "))
 print(pca_plot)
 save_ggplot(pca_plot, file.path(paths[["figures"]], "pca.png"))
 correlation_path <- file.path(paths[["figures"]], "sample_correlation.png")
-save_correlation_heatmap(transformed, correlation_path, paste(config$data_label, "sample correlation", sep = ": "))
+correlation <- save_correlation_heatmap(transformed, correlation_path,
+                                        paste(config$data_label, "sample correlation", sep = ": "))
+write.csv(correlation, file.path(paths[["tables"]], "sample_correlation.csv"))
 knitr::include_graphics(normalizePath(correlation_path))
+dispersion_path <- file.path(paths[["figures"]], "dispersion_estimates.png")
+save_dispersion_plot(dds, dispersion_path, paste(config$data_label, "dispersion estimates", sep = ": "))
+knitr::include_graphics(normalizePath(dispersion_path))
 ```
 
 # Differential expression
 
-Adjusted p-values use the Benjamini-Hochberg procedure. Direction indicates the sign of the numerator-versus-denominator log2 fold change among genes passing the configured FDR.
+Fold changes are unshrunk numerator-versus-denominator estimates. Heatmaps show a deterministic selection: lowest adjusted p-value, then largest absolute fold change, then gene ID; values are row-centered VST counts, not z-scores.
 
-```{r differential-expression, results='asis', fig.width=7, fig.height=5}
-contrast_results <- list()
-for (index in seq_len(nrow(contrasts))) {
-  comparison <- contrasts[index, , drop = FALSE]
-  label <- comparison$label[[1L]]
+```{r differential-expression, results='asis'}
+for (label in names(contrast_results)) {
+  result <- contrast_results[[label]]
   stem <- safe_file_stem(label)
-  result <- run_deseq_contrast(dds, comparison, config$fdr)
-  contrast_results[[label]] <- result
-  write.csv(result, file.path(paths[["tables"]], paste0(stem, "_deseq2.csv")), row.names = FALSE)
-
-  cat("\n\n## ", label, "\n\n", sep = "")
-  summary_table <- as.data.frame(table(result$direction), stringsAsFactors = FALSE)
-  names(summary_table) <- c("classification", "genes")
-  print(knitr::kable(summary_table, caption = paste("FDR", config$fdr)))
-  volcano <- make_volcano_plot(result, label, config$fdr, config$data_label)
-  print(volcano)
-  save_ggplot(volcano, file.path(paths[["figures"]], paste0(stem, "_volcano.png")))
-
+  cat("\n## ", label, "\n\n", sep = "")
+  print(knitr::kable(result_summary[result_summary$contrast == label, ], digits = 4))
   ma_plot <- make_ma_plot(result, label, config$fdr, config$data_label)
   print(ma_plot)
   save_ggplot(ma_plot, file.path(paths[["figures"]], paste0(stem, "_ma.png")))
-
+  volcano <- make_volcano_plot(result, label, config$fdr, config$data_label)
+  print(volcano)
+  save_ggplot(volcano, file.path(paths[["figures"]], paste0(stem, "_volcano.png")))
   heatmap_path <- file.path(paths[["figures"]], paste0(stem, "_significant_genes_heatmap.png"))
   heatmap_summary <- save_significant_gene_heatmap(
-    transformed, metadata, heatmap_path, config$heatmap_top_genes, result,
-    config$fdr, config,
-    paste(config$data_label, "significant genes across replicates", sep = ": ")
+    transformed, sample_metadata, heatmap_path, config$heatmap_top_genes, result,
+    config$fdr, config, paste(config$data_label, label, "significant genes", sep = ": ")
   )
-  cat("\n\nThe heatmap shows ", length(heatmap_summary$selected_genes), " of ",
-      heatmap_summary$available_significant, " genes passing adjusted p-value < ",
-      config$fdr, ". Values are row-centered variance-stabilized counts; they are not z-scores.\n\n", sep = "")
-  cat("\n\n![](figures/", basename(heatmap_path), ")\n\n", sep = "")
+  cat("\nThe heatmap shows ", length(heatmap_summary$selected_genes), " of ",
+      heatmap_summary$available_significant, " significant genes.\n\n", sep = "")
+  print(knitr::include_graphics(normalizePath(heatmap_path)))
 }
 ```
 
 # Optional functional enrichment
 
-Enrichment is disabled for the synthetic fixture. When enabled, the workflow maps the configured identifier type to Entrez IDs and analyzes significant up- and down-regulated genes separately against the set of tested genes. Failure to map identifiers produces empty outputs rather than a biological claim.
+When enabled, up- and down-regulated genes are mapped separately to Entrez IDs. Mapping coverage is exported for every direction. Empty, completely unmapped, and partially mapped selections produce explicit statuses and schema-stable tables rather than biological claims.
 
-```{r enrichment}
+```{r enrichment, results='asis'}
 if (isTRUE(config$enrichment$enabled)) {
   for (label in names(contrast_results)) {
     result <- contrast_results[[label]]
     stem <- safe_file_stem(label)
     for (direction in c("up", "down")) {
-      selected <- result$gene_id[result$direction == direction]
-      enrichment <- run_optional_enrichment(
-        gene_ids = selected,
-        universe_ids = result$gene_id[!is.na(result$pvalue)],
-        direction = direction,
-        contrast_label = label,
-        config = config
-      )
+      enrichment <- capture_warnings(run_optional_enrichment(
+        result$gene_id[result$direction == direction],
+        result$gene_id[result$retained_for_model & is.finite(result$pvalue)],
+        direction, label, config
+      ))
       write.csv(enrichment$go_bp, file.path(paths[["tables"]], paste0(stem, "_", direction, "_go_bp.csv")), row.names = FALSE)
       write.csv(enrichment$reactome, file.path(paths[["tables"]], paste0(stem, "_", direction, "_reactome.csv")), row.names = FALSE)
       write.csv(enrichment$mapping_coverage, file.path(paths[["tables"]], paste0(stem, "_", direction, "_mapping_coverage.csv")), row.names = FALSE)
+      print(knitr::kable(enrichment$mapping_coverage))
     }
   }
+} else cat("Enrichment was not requested in this configuration.\n")
+```
+
+# Downloads and reproducibility
+
+```{r downloads, results='asis'}
+warning_table <- data.frame(warning = unique(warning_log), stringsAsFactors = FALSE)
+if (!nrow(warning_table)) warning_table <- data.frame(warning = "No warnings captured.")
+write.csv(warning_table, file.path(paths[["tables"]], "warnings.csv"), row.names = FALSE)
+session_text <- capture.output(sessionInfo())
+writeLines(session_text, file.path(paths[["tables"]], "session_info.txt"))
+if (isTRUE(params$portfolio_snapshot)) {
+  cat("This saved portfolio snapshot links only to compact tracked results. Full tables are regenerated under the configured output directory.\n\n")
+  snapshot_files <- c(
+    "Contrast summary" = "../results/gse231397/contrast_summary.csv",
+    "Published-target concordance" = "../results/gse231397/published_target_concordance.csv"
+  )
+  cat(paste0("- [", names(snapshot_files), "](", snapshot_files, ")", collapse = "\n"))
 } else {
-  cat("Enrichment was not requested in this configuration.")
+  table_files <- sort(list.files(paths[["tables"]]))
+  cat(paste0("- [", table_files, "](tables/", table_files, ")", collapse = "\n"))
 }
 ```
 
-# Reproducibility
+The manifests record resolved input paths and SHA-256 hashes, analysis-code hashes, resolved configuration, software versions, warnings, and the full R session. These are a transparent run record, not a claim that the environment is automatically restorable.
 
 ```{r session-info}
 sessionInfo()

@@ -58,6 +58,16 @@ assert_error(
   "Design variables must be categorical"
 )
 
+numeric_codes <- metadata
+numeric_codes$condition <- ifelse(numeric_codes$condition == "control", "0", "1")
+numeric_code_contrasts <- contrasts
+numeric_code_contrasts$numerator <- "1"
+numeric_code_contrasts$denominator <- "0"
+assert_error(
+  validate_analysis_inputs(counts, numeric_codes, numeric_code_contrasts, "~ condition"),
+  "numeric-looking values"
+)
+
 collision_file <- tempfile(fileext = ".csv")
 writeLines(c(
   "label,factor,numerator,denominator",
@@ -130,5 +140,46 @@ assert_true(
   identical(select_significant_genes(ranking_fixture, 0.001, 10L), character()),
   "Heatmap selection must not include genes outside the declared adjusted-p-value threshold."
 )
+
+statuses <- classify_result_status(
+  input_row_sums = c(0, 3, 8, 9, 10, 11),
+  retained = c(FALSE, FALSE, TRUE, TRUE, TRUE, TRUE),
+  pvalue = c(NA, NA, NA, 0.2, 0.1, 0.001),
+  padj = c(NA, NA, NA, NA, 0.5, 0.01),
+  significant = c(FALSE, FALSE, FALSE, FALSE, FALSE, TRUE)
+)
+assert_true(identical(statuses, c(
+  "all_zero", "low_count_filtered", "unavailable", "independent_filtered",
+  "tested_nonsignificant", "significant"
+)), "Result-status semantics changed.")
+
+mock_map <- function(ids) {
+  values <- c(mapped = "101", second = "102")
+  setNames(unname(values[ids]), ids)
+}
+empty_mapping <- map_enrichment_ids(character(), character(), mock_map)
+assert_true(identical(empty_mapping$status, "empty_universe"), "Empty enrichment universe is not explicit.")
+unmapped <- map_enrichment_ids("missing", c("missing", "also_missing"), mock_map)
+assert_true(identical(unmapped$status, "universe_unmapped"), "Unmapped enrichment universe is not explicit.")
+partial <- map_enrichment_ids(c("mapped", "missing"), c("mapped", "second", "missing"), mock_map)
+assert_true(identical(partial$status, "partial_selected_mapping"), "Partial enrichment mapping is not explicit.")
+
+if (requireNamespace("AnnotationDbi", quietly = TRUE) &&
+    requireNamespace("org.Hs.eg.db", quietly = TRUE)) {
+  human_config <- load_analysis_config(file.path("config", "gse231397_e2_vs_vehicle.R"))
+  empty_enrichment <- run_optional_enrichment(
+    character(), character(), "up", "empty_test", human_config
+  )
+  assert_true(identical(empty_enrichment$mapping_coverage$status, "empty_universe"),
+              "Empty enrichment did not return an explicit coverage status.")
+  assert_true(identical(names(empty_enrichment$go_bp), names(empty_enrichment_table())) &&
+                identical(names(empty_enrichment$reactome), names(empty_enrichment_table())),
+              "Empty enrichment outputs do not preserve the documented schema.")
+  unmapped_enrichment <- run_optional_enrichment(
+    "not_a_gene", c("also_not_a_gene"), "down", "unmapped_test", human_config
+  )
+  assert_true(identical(unmapped_enrichment$mapping_coverage$status, "universe_unmapped"),
+              "Unmapped enrichment did not return an explicit coverage status.")
+}
 
 cat("All dependency-free helper and fixture tests passed.\n")

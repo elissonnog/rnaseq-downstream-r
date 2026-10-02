@@ -10,6 +10,12 @@ analysis_config <- list(
   fdr = 0.05,
   pca_top_genes = 500L,
   heatmap_top_genes = 30L,
+  gene_labels = list(
+    enabled = TRUE,
+    gene_id_type = "ENTREZID",
+    organism_db = "org.Hs.eg.db",
+    column = "SYMBOL"
+  ),
   enrichment = list(
     enabled = FALSE,
     species = "Homo sapiens",

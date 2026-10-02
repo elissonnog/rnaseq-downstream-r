@@ -29,11 +29,13 @@ The download script retrieves the NCBI count archive and GEO metadata, verifies 
 - a complete DESeq2 table and normalized counts under `output/gse231397_e2_vs_vehicle/tables/`
 - PCA, correlation, MA, volcano, and significant-gene heatmaps under `output/gse231397_e2_vs_vehicle/figures/`
 
-Exact accessions, checksums, and sample selection are recorded in [the provenance note](example/gse231397/PROVENANCE.md). The workflow requires R, Pandoc, `rmarkdown`, `knitr`, `ggplot2`, `DESeq2`, and `SummarizedExperiment`.
+Exact accessions, checksums, and sample selection are recorded in [the provenance note](example/gse231397/PROVENANCE.md). The workflow requires R, Pandoc, `rmarkdown`, `knitr`, `ggplot2`, `openssl`, `DESeq2`, and `SummarizedExperiment`; the public configuration also declares `AnnotationDbi` and `org.Hs.eg.db` for gene labels.
+
+Dependency checks, tested package versions, tests, and result-regeneration commands are documented in [SETUP_AND_TESTING.md](SETUP_AND_TESTING.md).
 
 ## Results
 
-Of 20,488 tested genes, 2,570 passed FDR 0.05: 1,499 had positive and 1,071 had negative unshrunk log2 fold changes for E2 versus vehicle. PCA separated the treatment groups along the first component.
+The complete ledger contains 39,376 input genes: 20,488 pass the count prefilter, 14,530 receive finite adjusted p-values after DESeq2 independent filtering, and 2,570 pass FDR 0.05. Of the significant genes, 1,499 have positive and 1,071 have negative unshrunk log2 fold changes for E2 versus vehicle. PCA separates the treatment groups along the first component.
 
 The compact [contrast summary](results/gse231397/contrast_summary.csv) and [published-target comparison](results/gse231397/published_target_concordance.csv) are tracked with the repository; the complete tables are generated locally.
 

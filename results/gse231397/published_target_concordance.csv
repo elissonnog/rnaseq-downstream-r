@@ -1,4 +1,4 @@
-gene_symbol,gene_id,log2FoldChange,padj,direction
-GREB1,9687,2.67425947425498,1.29450736655252e-143,up
-PGR,5241,2.83325679241483,1.26658909586247e-15,up
-TFF1,7031,1.48017764206335,5.22986577059814e-06,up
+"gene","gene_id","expected_direction","log2FoldChange","padj","test_status","observed_direction","direction_concordant"
+"GREB1","9687","up",2.67425947425498,1.29450736655252e-143,"significant","up",TRUE
+"PGR","5241","up",2.83325679241483,1.26658909586247e-15,"significant","up",TRUE
+"TFF1","7031","up",1.48017764206335,5.22986577059814e-06,"significant","up",TRUE
